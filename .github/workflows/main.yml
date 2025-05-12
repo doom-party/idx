@@ -2,8 +2,8 @@ name: Auto Shell Keep Alive
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 每小时的第0分钟执行一次
-  workflow_dispatch:      # 允许手动触发
+    - cron: '0 * * * *'  # 每小时执行一次
+  workflow_dispatch:
 
 jobs:
   keep-alive:
@@ -34,12 +34,12 @@ jobs:
       env:
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-      run: python keep.py
+      run: python idx.py
 
     - name: Commit and push if changed
       run: |
         git config --global user.name 'github-actions[bot]'
         git config --global user.email 'github-actions[bot]@users.noreply.github.com'
         git add cookie.json last_cookie.json
-        git diff --quiet && git diff --staged --quiet || git commit -m "Update cookie.json"
+        git diff --quiet && git diff --staged --quiet || git commit -m "Update cookie.json and last_cookie.json"
         git push
