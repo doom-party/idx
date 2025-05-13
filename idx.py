@@ -230,46 +230,121 @@ async def handle_terms_dialog(page, max_attempts=3):
         try:
             log_message(f"第{attempt}次尝试处理Terms对话框...")
             
-            # 尝试直接使用ID查找复选框
-            utos_checkbox = page.locator("#utos-checkbox")
-            await utos_checkbox.check(timeout=8000)
-            log_message(f"已勾选条款复选框")
+            # 使用JavaScript直接勾选复选框，避免点击到链接
+            await page.evaluate("""
+                // 尝试多种可能的选择器找到复选框
+                const selectors = [
+                    '#utos-checkbox',
+                    'input[type="checkbox"][id*="checkbox"]',
+                    'input[type="checkbox"]',
+                    'div.utoscheckbox-root input[type="checkbox"]'
+                ];
+                
+                // 尝试所有选择器
+                for (const selector of selectors) {
+                    const checkbox = document.querySelector(selector);
+                    if (checkbox && !checkbox.checked) {
+                        checkbox.checked = true;
+                        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+                        console.log('已通过JavaScript勾选复选框：' + selector);
+                        return true;
+                    }
+                }
+                
+                // 如果没有找到匹配的选择器，提供更多详细信息
+                console.log('无法找到复选框，页面内的所有checkbox如下:');
+                document.querySelectorAll('input[type="checkbox"]').forEach((cb, i) => {
+                    console.log(`Checkbox ${i}: id=${cb.id}, name=${cb.name}, aria-label=${cb.getAttribute('aria-label')}`);
+                });
+                
+                return false;
+            """)
+            
+            log_message("已尝试通过JavaScript勾选复选框")
             
             # 等待状态更新
             await asyncio.sleep(2)
             
-            # 使用角色选择器点击Confirm按钮
-            confirm_button = page.get_by_role("button", name="Confirm")
-            await confirm_button.click(timeout=8000)
-            log_message(f"已点击Confirm按钮")
-            return True
+            # 使用JavaScript点击确认按钮
+            button_clicked = await page.evaluate("""
+                // 尝试多种可能的按钮选择器
+                const buttonSelectors = [
+                    'button[name="confirm"], button:has-text("Confirm")',
+                    '#submit-button:not([disabled])',
+                    'button[type="submit"]:not([disabled])',
+                    'button.confirm-button:not([disabled])',
+                    'button.mat-button:not([disabled])',
+                    'button:not([disabled])'
+                ];
+                
+                // 尝试所有按钮选择器
+                for (const selector of buttonSelectors) {
+                    const buttons = Array.from(document.querySelectorAll(selector));
+                    // 优先选择包含Confirm或Accept文本的按钮
+                    const confirmButton = buttons.find(btn => 
+                        btn.textContent.includes('Confirm') || 
+                        btn.textContent.includes('Accept') ||
+                        btn.textContent.includes('确认') ||
+                        btn.textContent.includes('接受')
+                    ) || buttons[0]; // 如果没找到，使用第一个按钮
+                    
+                    if (confirmButton) {
+                        console.log('找到确认按钮：' + confirmButton.textContent);
+                        confirmButton.click();
+                        return true;
+                    }
+                }
+                
+                // 如果没找到匹配的按钮，提供更多信息
+                console.log('无法找到确认按钮，页面内的所有按钮如下:');
+                document.querySelectorAll('button').forEach((btn, i) => {
+                    console.log(`Button ${i}: text=${btn.textContent.trim()}, disabled=${btn.disabled}`);
+                });
+                
+                return false;
+            """)
             
+            if button_clicked:
+                log_message("已通过JavaScript点击确认按钮")
+                return True
+            else:
+                log_message("通过JavaScript未能找到确认按钮")
+                
+            # 如果JavaScript方法失败，尝试截图来帮助调试
+            try:
+                screenshot_path = f"terms_dialog_attempt_{attempt}.png"
+                await page.screenshot(path=screenshot_path)
+                log_message(f"已保存Terms对话框截图到 {screenshot_path}")
+            except Exception as e:
+                log_message(f"保存截图失败: {e}")
+                
         except Exception as e:
             log_message(f"第{attempt}次处理Terms对话框失败: {e}")
             
-            # 尝试备用方法
+            # 尝试获取页面源码以便调试
             try:
-                # 方法2：通过文本寻找label
-                label = page.locator("label").filter(has_text="I accept the terms and")
-                await label.click(force=True, timeout=5000)
-                log_message("使用备用方法点击了条款label")
-                
-                await asyncio.sleep(2)
-                
-                # 尝试不同的方式点击Confirm按钮
-                submit_button = page.locator('#submit-button:not([disabled])')
-                await submit_button.click(timeout=5000)
-                log_message("使用备用方法点击了submit-button")
-                return True
-            except Exception as backup_e:
-                log_message(f"备用方法也失败: {backup_e}")
-                
+                html = await page.content()
+                log_message(f"当前页面源码片段: {html[:500]}...")
+            except Exception:
+                pass
+            
             if attempt < max_attempts:
                 log_message("等待2秒后重试...")
                 await asyncio.sleep(2)
             else:
                 log_message("已达到最大重试次数，继续执行后续步骤")
                 return False
+    
+    # 如果所有尝试都失败，尝试点击页面任意处继续
+    try:
+        # 尝试点击页面中间位置，避开链接
+        log_message("尝试点击页面中间，绕过Terms对话框...")
+        await page.mouse.click(page.viewport_size["width"] // 2, page.viewport_size["height"] // 2)
+        await asyncio.sleep(2)
+        return True
+    except Exception as e:
+        log_message(f"尝试点击页面中间也失败: {e}")
+        return False
 
 async def wait_for_workspace_loaded(page, timeout=180):
     """等待Firebase Studio工作区加载完成"""
@@ -461,6 +536,39 @@ async def click_workspace_icon(page):
     log_message("所有选择器都尝试失败，无法点击工作区图标")
     return False
 
+async def navigate_to_firebase_by_clicking(page):
+    """通过点击已验证的工作区图标导航到Firebase Studio"""
+    log_message("通过点击已验证的工作区图标导航到Firebase Studio...")
+    
+    # 获取点击前的URL
+    pre_click_url = page.url
+    log_message(f"点击前当前URL: {pre_click_url}")
+    
+    # 尝试点击工作区图标
+    workspace_icon_clicked = await click_workspace_icon(page)
+    
+    if not workspace_icon_clicked:
+        log_message("无法点击工作区图标，导航失败")
+        return False
+    
+    # 等待页面响应，检查URL变化
+    await asyncio.sleep(5)
+    
+    # 检查点击后URL是否变化
+    post_click_url = page.url
+    log_message(f"点击后当前URL: {post_click_url}")
+    
+    url_changed = pre_click_url != post_click_url
+    log_message(f"URL是否发生变化: {url_changed}")
+    
+    if url_changed:
+        log_message("点击工作区图标成功，URL已变化，继续等待工作区加载")
+        # URL已变化，直接返回True，后续操作不变
+        return True
+    else:
+        log_message("点击工作区图标后URL未变化，导航失败")
+        return False
+
 async def login_with_ui_flow(page):
     """通过UI交互流程登录idx.google.com，然后跳转到Firebase Studio"""
     try:
@@ -507,40 +615,8 @@ async def login_with_ui_flow(page):
             if url_valid and workspace_icon_visible:
                 log_message("UI交互后双重验证通过：确认已成功登录idx.google.com!")
                 
-                # 登录成功后跳转到Firebase Studio
-                firebase_url = "https://studio.firebase.google.com/sherry-17350756"
-                log_message(f"登录成功，跳转到Firebase Studio URL: {firebase_url}")
-                try:
-                    # 增加页面跳转的超时处理
-                    await page.goto(firebase_url, timeout=TIMEOUT)
-                    
-                    # 等待DOM内容加载
-                    log_message("等待Firebase Studio页面DOM内容加载...")
-                    await page.wait_for_load_state("domcontentloaded", timeout=90000)
-                    log_message("Firebase Studio DOM内容已加载")
-                    
-                    # 等待网络活动稳定
-                    try:
-                        log_message("等待Firebase Studio网络活动稳定...")
-                        await page.wait_for_load_state("networkidle", timeout=60000)
-                        log_message("Firebase Studio网络活动已稳定")
-                    except Exception as e:
-                        log_message(f"等待网络稳定超时，但将继续流程: {e}")
-                    
-                    # 刷新一次页面以确保内容正确加载
-                    log_message("刷新Firebase Studio页面以确保内容正确加载...")
-                    await page.reload()
-                    
-                    # 再次等待DOM内容加载和网络稳定
-                    await page.wait_for_load_state("domcontentloaded", timeout=60000)
-                    try:
-                        await page.wait_for_load_state("networkidle", timeout=60000)
-                    except Exception as e:
-                        log_message(f"刷新后等待网络稳定超时，但将继续流程: {e}")
-                except Exception as e:
-                    log_message(f"跳转或等待Firebase Studio页面加载时出错: {e}，但将继续尝试")
-                
-                return True
+                # 登录成功后，通过点击已验证的工作区图标导航到Firebase Studio
+                return await navigate_to_firebase_by_clicking(page)
             else:
                 log_message(f"UI交互后验证登录失败：URL不含signin: {url_valid}, 工作区验证: {workspace_icon_visible}")
                 return False
@@ -552,7 +628,7 @@ async def login_with_ui_flow(page):
         return False
 
 async def direct_url_access(page):
-    """先访问idx.google.com验证登录，成功后跳转到Firebase Studio"""
+    """先访问idx.google.com验证登录，成功后通过点击已验证的工作区图标进入Firebase Studio"""
     try:
         # 先访问idx.google.com
         log_message("先访问idx.google.com验证登录状态...")
@@ -599,40 +675,8 @@ async def direct_url_access(page):
         if url_valid and workspace_icon_visible:
             log_message("双重验证通过：URL不含signin且工作区图标出现，确认已成功登录idx.google.com!")
             
-            # 登录成功后跳转到Firebase Studio
-            firebase_url = "https://studio.firebase.google.com/sherry-17350756"
-            log_message(f"登录成功，跳转到Firebase Studio URL: {firebase_url}")
-            try:
-                # 增加页面跳转的超时处理
-                await page.goto(firebase_url, timeout=TIMEOUT)
-                
-                # 等待DOM内容加载
-                log_message("等待Firebase Studio页面DOM内容加载...")
-                await page.wait_for_load_state("domcontentloaded", timeout=90000)
-                log_message("Firebase Studio DOM内容已加载")
-                
-                # 等待网络活动稳定
-                try:
-                    log_message("等待Firebase Studio网络活动稳定...")
-                    await page.wait_for_load_state("networkidle", timeout=60000)
-                    log_message("Firebase Studio网络活动已稳定")
-                except Exception as e:
-                    log_message(f"等待网络稳定超时，但将继续流程: {e}")
-                
-                # 刷新一次页面以确保内容正确加载
-                log_message("刷新Firebase Studio页面以确保内容正确加载...")
-                await page.reload()
-                
-                # 再次等待DOM内容加载和网络稳定
-                await page.wait_for_load_state("domcontentloaded", timeout=60000)
-                try:
-                    await page.wait_for_load_state("networkidle", timeout=60000)
-                except Exception as e:
-                    log_message(f"刷新后等待网络稳定超时，但将继续流程: {e}")
-            except Exception as e:
-                log_message(f"跳转或等待Firebase Studio页面加载时出错: {e}，但将继续尝试")
-            
-            return True
+            # 登录成功后，通过点击已验证的工作区图标导航到Firebase Studio
+            return await navigate_to_firebase_by_clicking(page)
         else:
             log_message(f"验证登录失败：URL不含signin: {url_valid}, 工作区图标出现: {workspace_icon_visible}")
             return False
@@ -663,7 +707,7 @@ async def run(playwright: Playwright) -> bool:
         
         # 启动浏览器
         browser = await playwright.chromium.launch(
-            headless=True,  # 设置为True在生产环境中运行
+            headless=False,  # 设置为True在生产环境中运行
             slow_mo=300,
             args=browser_args
         )
