@@ -7,6 +7,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 from playwright.async_api import Playwright, async_playwright
+import time
 
 # 基础配置
 BASE_PREFIX = "9000-idx-sherry-"
@@ -131,44 +132,6 @@ def load_cookies(filename=cookies_path):
             pass
         return empty_data
 
-def extract_domain_from_jwt(jwt_value=None):
-    """从JWT token中提取域名"""
-    try:
-        # 如果没有提供JWT，尝试从cookie文件加载
-        if not jwt_value:
-            cookie_data = load_cookies(cookies_path)
-            for cookie in cookie_data.get("cookies", []):
-                if cookie.get("name") == "WorkstationJwtPartitioned":
-                    jwt_value = cookie.get("value")
-                    break
-        
-        if not jwt_value:
-            log_message("无法找到JWT值，将使用默认域名")
-            return f"{BASE_PREFIX}1745752283749.cluster-ikxjzjhlifcwuroomfkjrx437g.cloudworkstations.dev"
-            
-        # 解析JWT获取域名信息
-        parts = jwt_value.split('.')
-        if len(parts) >= 2:
-            import base64
-            
-            # 解码中间部分（可能需要补齐=）
-            padded = parts[1] + '=' * (4 - len(parts[1]) % 4)
-            decoded = base64.b64decode(padded)
-            payload = json.loads(decoded)
-            
-            # 从aud字段提取域名
-            if 'aud' in payload:
-                aud = payload['aud']
-                match = re.search(r'(idx-sherry-[^\.]+\.cluster-[^\.]+\.cloudworkstations\.dev)', aud)
-                if match:
-                    return f"https://{BASE_PREFIX}{match.group(1).split('idx-sherry-')[1]}"
-        
-        # 如果提取失败，使用默认域名
-        return f"https://{BASE_PREFIX}1745752283749.cluster-ikxjzjhlifcwuroomfkjrx437g.cloudworkstations.dev"
-    except Exception as e:
-        log_message(f"提取域名时出错: {e}")
-        return f"https://{BASE_PREFIX}1745752283749.cluster-ikxjzjhlifcwuroomfkjrx437g.cloudworkstations.dev"
-
 def check_page_status_with_requests():
     """使用预设的JWT和URL值直接检查工作站的访问状态"""
     try:
@@ -201,12 +164,17 @@ def check_page_status_with_requests():
             'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
         }
         
-        log_message(f"使用requests检查工作站状态，URL: {preset_url}")
+        # 获取正确的域名
+        workstation_url = extract_domain_from_jwt(jwt)
+        if not workstation_url:
+            workstation_url = preset_url
+            
+        log_message(f"使用requests检查工作站状态，URL: {workstation_url}")
         log_message(f"使用JWT: {jwt[:20]}... (已截断)")
         
-        # 发送请求获取页面状态
+        # 发送请求获取页面状态，简化直接访问
         response = requests.get(
-            preset_url,
+            workstation_url,
             cookies=request_cookies,
             headers=headers,
             timeout=15
@@ -223,6 +191,113 @@ def check_page_status_with_requests():
     except Exception as e:
         log_message(f"使用requests检查工作站状态时出错: {e}")
         return False
+
+def extract_domain_from_jwt(jwt_value=None):
+    """从JWT token中提取域名"""
+    try:
+        # 如果没有提供JWT，尝试从cookie文件加载
+        if not jwt_value:
+            cookie_data = load_cookies(cookies_path)
+            for cookie in cookie_data.get("cookies", []):
+                if cookie.get("name") == "WorkstationJwtPartitioned":
+                    jwt_value = cookie.get("value")
+                    break
+        
+        if not jwt_value:
+            log_message("无法找到JWT值，将使用默认域名")
+            return f"https://{BASE_PREFIX}1745752283749.cluster-ikxjzjhlifcwuroomfkjrx437g.cloudworkstations.dev"
+            
+        # 解析JWT获取域名信息
+        parts = jwt_value.split('.')
+        if len(parts) >= 2:
+            import base64
+            
+            # 解码中间部分（可能需要补齐=）
+            padded = parts[1] + '=' * (4 - len(parts[1]) % 4)
+            decoded = base64.b64decode(padded)
+            payload = json.loads(decoded)
+            
+            # 从aud字段提取域名
+            if 'aud' in payload:
+                aud = payload['aud']
+                log_message(f"JWT中提取的aud字段: {aud}")
+                match = re.search(r'(idx-sherry-[^\.]+\.cluster-[^\.]+\.cloudworkstations\.dev)', aud)
+                if match:
+                    domain_suffix = match.group(1).split('idx-sherry-')[1]
+                    full_domain = f"https://{BASE_PREFIX}{domain_suffix}"
+                    log_message(f"从JWT提取的域名: {full_domain}")
+                    return full_domain
+        
+        # 如果提取失败，使用默认域名
+        default_domain = f"https://{BASE_PREFIX}1745752283749.cluster-ikxjzjhlifcwuroomfkjrx437g.cloudworkstations.dev"
+        log_message(f"使用默认域名: {default_domain}")
+        return default_domain
+    except Exception as e:
+        log_message(f"提取域名时出错: {e}")
+        return f"https://{BASE_PREFIX}1745752283749.cluster-ikxjzjhlifcwuroomfkjrx437g.cloudworkstations.dev"
+
+def extract_and_display_credentials():
+    """从cookie.json中提取并显示云工作站域名和JWT"""
+    try:
+        if not os.path.exists(cookies_path):
+            log_message("cookie.json文件不存在，无法提取凭据")
+            return
+            
+        with open(cookies_path, 'r', encoding='utf-8') as f:
+            cookie_data = json.load(f)
+            
+        # 提取JWT
+        jwt = None
+        for cookie in cookie_data.get("cookies", []):
+            if cookie.get("name") == "WorkstationJwtPartitioned":
+                jwt = cookie.get("value")
+                break
+                
+        if not jwt:
+            log_message("在cookie.json中未找到WorkstationJwtPartitioned")
+            return
+            
+        # 从JWT中提取域名，使用现有函数避免代码重复
+        domain = extract_domain_from_jwt(jwt)
+            
+        # 显示提取的信息
+        log_message("\n========== 提取的凭据信息 ==========")
+        log_message(f"WorkstationJwtPartitioned: {jwt[:20]}...{jwt[-20:]} (已截断，仅显示前20和后20字符)")
+        
+        if domain:
+            log_message(f"工作站域名: {domain}")
+        else:
+            log_message("无法从JWT提取域名")
+            
+        # 打印完整的请求示例
+        log_message("\n以下是可用于访问工作站的请求示例代码:")
+        code_example = f"""import requests
+
+cookies = {{
+    'WorkstationJwtPartitioned': '{jwt}',
+}}
+
+headers = {{
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+    'Accept-Language': 'en-US',
+    'Connection': 'keep-alive',
+    'Referer': 'https://workstations.cloud.google.com/',
+    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
+}}
+
+response = requests.get(
+    '{domain if domain else "工作站URL"}',
+    cookies=cookies,
+    headers=headers,
+)
+print(response.status_code)
+print(response.text)"""
+        log_message(code_example)
+        log_message("========== 提取完成 ==========\n")
+        
+    except Exception as e:
+        log_message(f"提取凭据时出错: {e}")
+        log_message(traceback.format_exc())
 
 async def handle_terms_dialog(page, max_attempts=3):
     """处理Terms对话框"""
@@ -781,86 +856,6 @@ async def run(playwright: Playwright) -> bool:
                 return False
     
     return False
-
-def extract_and_display_credentials():
-    """从cookie.json中提取并显示云工作站域名和JWT"""
-    try:
-        if not os.path.exists(cookies_path):
-            log_message("cookie.json文件不存在，无法提取凭据")
-            return
-            
-        with open(cookies_path, 'r', encoding='utf-8') as f:
-            cookie_data = json.load(f)
-            
-        # 提取JWT
-        jwt = None
-        for cookie in cookie_data.get("cookies", []):
-            if cookie.get("name") == "WorkstationJwtPartitioned":
-                jwt = cookie.get("value")
-                break
-                
-        if not jwt:
-            log_message("在cookie.json中未找到WorkstationJwtPartitioned")
-            return
-            
-        # 从JWT中提取域名
-        domain = None
-        try:
-            parts = jwt.split('.')
-            if len(parts) >= 2:
-                import base64
-                
-                # 解码中间部分（可能需要补齐=）
-                padded = parts[1] + '=' * (4 - len(parts[1]) % 4)
-                decoded = base64.b64decode(padded)
-                payload = json.loads(decoded)
-                
-                # 从aud字段提取域名
-                if 'aud' in payload:
-                    aud = payload['aud']
-                    match = re.search(r'(idx-sherry-[^\.]+\.cluster-[^\.]+\.cloudworkstations\.dev)', aud)
-                    if match:
-                        domain = f"https://{BASE_PREFIX}{match.group(1).split('idx-sherry-')[1]}"
-        except Exception as e:
-            log_message(f"从JWT提取域名时出错: {e}")
-            
-        # 显示提取的信息
-        log_message("\n========== 提取的凭据信息 ==========")
-        log_message(f"WorkstationJwtPartitioned: {jwt[:20]}...{jwt[-20:]} (已截断，仅显示前20和后20字符)")
-        
-        if domain:
-            log_message(f"工作站域名: {domain}")
-        else:
-            log_message("无法从JWT提取域名")
-            
-        # 打印完整的请求示例
-        log_message("\n以下是可用于访问工作站的请求示例代码:")
-        code_example = f"""import requests
-
-cookies = {{
-    'WorkstationJwtPartitioned': '{jwt}',
-}}
-
-headers = {{
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-    'Accept-Language': 'en-US',
-    'Connection': 'keep-alive',
-    'Referer': 'https://workstations.cloud.google.com/',
-    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
-}}
-
-response = requests.get(
-    '{domain if domain else "工作站URL"}',
-    cookies=cookies,
-    headers=headers,
-)
-print(response.status_code)
-print(response.text)"""
-        log_message(code_example)
-        log_message("========== 提取完成 ==========\n")
-        
-    except Exception as e:
-        log_message(f"提取凭据时出错: {e}")
 
 async def main():
     """主函数"""
