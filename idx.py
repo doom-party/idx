@@ -342,8 +342,7 @@ async def run(playwright: Playwright) -> bool:
                 for checkbox_attempt in range(1, max_checkbox_retries + 1):
                     try:
                         # 先点击第一个条款复选框的label
-                        await page.wait_for_selector('label.basic-checkbox-label:nth-child(1)', timeout=8000)
-                        await page.locator('label.basic-checkbox-label:nth-child(1)').click(force=True)
+                        await page.locator("label").filter(has_text="I accept the terms and").click(force=True)
                         log_message(f"第{checkbox_attempt}次尝试：已点击第一个条款复选框label")
 
                         # 等待2秒，确保按钮状态刷新
