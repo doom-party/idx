@@ -262,7 +262,7 @@ async def run(playwright: Playwright) -> bool:
 
         # 使用有头模式以避免headless特征检测
         browser = await playwright.chromium.launch(
-            headless=True,
+            headless=False,
             slow_mo=300,  # 减少延迟时间
             args=browser_args
         )
@@ -339,13 +339,20 @@ async def run(playwright: Playwright) -> bool:
                 await asyncio.sleep(20)  # 等待20秒，确保登录弹窗加载完毕
                 # 检查并自动勾选Firebase Studio条款弹窗
                 try:
-                    await page.wait_for_selector('#utos-checkbox', timeout=5000)
-                    await page.check('#utos-checkbox', force=True)
-                    await page.wait_for_selector('#submit-button:not([disabled])', timeout=5000)
-                    await page.click('#submit-button')
-                    log_message("已自动勾选条款并点击Confirm")
+                    # 先点击第一个条款复选框的label
+                    await page.wait_for_selector('label.basic-checkbox-label:nth-child(1)', timeout=8000)
+                    await page.locator('label.basic-checkbox-label:nth-child(1)').click(force=True)
+                    log_message("已点击第一个条款复选框label")
+
+                    # 等待2秒，确保按钮状态刷新
+                    await asyncio.sleep(2)
+
+                    # 等待Confirm按钮可用
+                    await page.wait_for_selector('#submit-button:not([disabled])', timeout=8000)
+                    await page.get_by_text("Confirm", exact=True).click()
+                    log_message("已点击Confirm按钮")
                 except Exception as e:
-                    log_message(f"未检测到Firebase Studio terms弹窗或自动点击失败: {e}")
+                    log_message(f"自动勾选条款并点击Confirm失败: {e}")
                 
                 # 使用Promise.race同时等待多个事件，哪个先完成就继续
                 try:
