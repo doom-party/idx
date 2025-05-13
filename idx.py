@@ -336,6 +336,16 @@ async def run(playwright: Playwright) -> bool:
                 # 导航到页面
                 await page.goto("https://idx.google.com/")
                 log_message("已发送页面请求，等待页面加载...")
+                await asyncio.sleep(20)  # 等待20秒，确保登录弹窗加载完毕
+                # 检查并自动勾选Firebase Studio条款弹窗
+                try:
+                    await page.wait_for_selector('#utos-checkbox', timeout=5000)
+                    await page.check('#utos-checkbox', force=True)
+                    await page.wait_for_selector('#submit-button:not([disabled])', timeout=5000)
+                    await page.click('#submit-button')
+                    log_message("已自动勾选条款并点击Confirm")
+                except Exception as e:
+                    log_message(f"未检测到Firebase Studio terms弹窗或自动点击失败: {e}")
                 
                 # 使用Promise.race同时等待多个事件，哪个先完成就继续
                 try:
