@@ -370,28 +370,10 @@ async def wait_for_workspace_loaded(page, timeout=180):
         except Exception as e:
             log_message(f"等待DOM加载超时: {e}，但将继续流程")
         
-        # 等待页面和资源更完整加载，但时间缩短
-        log_message("等待60秒让页面和资源完全加载...")
-        await asyncio.sleep(60)
+        # 等待页面完全加载，增加至120秒
+        log_message("等待120秒让页面和资源完全加载...")
+        await asyncio.sleep(120)
         log_message("等待时间结束，开始检测侧边栏元素...")
-        
-        # 在检测元素前先刷新页面，确保页面处于最新状态
-        log_message("刷新页面以确保内容正确加载...")
-        try:
-            await page.reload()
-            
-            # 等待页面重新加载
-            await page.wait_for_load_state("domcontentloaded", timeout=60000)
-            try:
-                await page.wait_for_load_state("networkidle", timeout=30000)
-            except Exception as e:
-                log_message(f"刷新后等待网络稳定超时，但这不会阻塞流程: {e}")
-                
-            # 等待额外的时间让页面元素稳定
-            log_message("等待额外的30秒让页面元素稳定...")
-            await asyncio.sleep(30)
-        except Exception as e:
-            log_message(f"刷新页面出错: {e}，但将继续流程")
         
         max_refresh_retries = 3
         for refresh_attempt in range(1, max_refresh_retries + 1):
@@ -460,7 +442,7 @@ async def wait_for_workspace_loaded(page, timeout=180):
                             log_message("已更新存储状态到cookie.json")
                             return True
                         elif refresh_attempt < max_refresh_retries:
-                            log_message(f"刷新页面并重试（第{refresh_attempt}/{max_refresh_retries}次）...")
+                            log_message(f"未找到足够元素，尝试刷新页面（第{refresh_attempt}/{max_refresh_retries}次）...")
                             await page.reload()
                             log_message("页面刷新后等待60秒让元素加载...")
                             await asyncio.sleep(60)
