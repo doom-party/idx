@@ -914,6 +914,17 @@ async def main():
     try:
         log_message("开始执行主流程...")
 
+        # 先用requests协议方式直接检查页面状态
+        check_result = check_page_status_with_requests()
+        if check_result:
+            log_message("【检查结果】工作站可直接通过协议访问（状态码200），流程直接退出")
+            if all_messages:
+                full_message = "\n".join(all_messages)
+                send_to_telegram(full_message)
+            return
+        else:
+            log_message("【检查结果】工作站不可通过协议直接访问（状态码非200），继续执行playwright自动化流程")
+
         # 使用playwright加载cookie.json，登录idx.google.com，然后通过requests检查工作站状态
         await update_cookie_with_playwright()
 
