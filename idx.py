@@ -280,10 +280,43 @@ async def wait_for_workspace_loaded(page, timeout=180):
     if "sherry" in current_url or "workspace" in current_url or "cloudworkstations" in current_url or "firebase" in current_url:
         log_message("URL包含目标关键词，确认进入目标页面")
         
-        # 先等待固定的180秒让页面和资源完全加载
-        log_message("开始等待180秒让页面和资源完全加载...")
-        await asyncio.sleep(180)
+        # 先等待页面基本加载，减少等待时间
+        log_message("等待页面基本加载...")
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=60000)
+            log_message("DOM内容已加载")
+            
+            # 尝试等待网络稳定，但不阻塞流程
+            try:
+                await page.wait_for_load_state("networkidle", timeout=30000)
+                log_message("网络活动已稳定")
+            except Exception as e:
+                log_message(f"等待网络稳定超时，但这不会阻塞流程: {e}")
+        except Exception as e:
+            log_message(f"等待DOM加载超时: {e}，但将继续流程")
+        
+        # 等待页面和资源更完整加载，但时间缩短
+        log_message("等待60秒让页面和资源完全加载...")
+        await asyncio.sleep(60)
         log_message("等待时间结束，开始检测侧边栏元素...")
+        
+        # 在检测元素前先刷新页面，确保页面处于最新状态
+        log_message("刷新页面以确保内容正确加载...")
+        try:
+            await page.reload()
+            
+            # 等待页面重新加载
+            await page.wait_for_load_state("domcontentloaded", timeout=60000)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=30000)
+            except Exception as e:
+                log_message(f"刷新后等待网络稳定超时，但这不会阻塞流程: {e}")
+                
+            # 等待额外的时间让页面元素稳定
+            log_message("等待额外的30秒让页面元素稳定...")
+            await asyncio.sleep(30)
+        except Exception as e:
+            log_message(f"刷新页面出错: {e}，但将继续流程")
         
         max_refresh_retries = 3
         for refresh_attempt in range(1, max_refresh_retries + 1):
@@ -474,10 +507,39 @@ async def login_with_ui_flow(page):
             if url_valid and workspace_icon_visible:
                 log_message("UI交互后双重验证通过：确认已成功登录idx.google.com!")
                 
-                # 跳转到Firebase Studio
-                firebase_url = "https://idx.google.com/sherry-17350756"
+                # 登录成功后跳转到Firebase Studio
+                firebase_url = "https://studio.firebase.google.com/sherry-17350756"
                 log_message(f"登录成功，跳转到Firebase Studio URL: {firebase_url}")
-                await page.goto(firebase_url, timeout=TIMEOUT)
+                try:
+                    # 增加页面跳转的超时处理
+                    await page.goto(firebase_url, timeout=TIMEOUT)
+                    
+                    # 等待DOM内容加载
+                    log_message("等待Firebase Studio页面DOM内容加载...")
+                    await page.wait_for_load_state("domcontentloaded", timeout=90000)
+                    log_message("Firebase Studio DOM内容已加载")
+                    
+                    # 等待网络活动稳定
+                    try:
+                        log_message("等待Firebase Studio网络活动稳定...")
+                        await page.wait_for_load_state("networkidle", timeout=60000)
+                        log_message("Firebase Studio网络活动已稳定")
+                    except Exception as e:
+                        log_message(f"等待网络稳定超时，但将继续流程: {e}")
+                    
+                    # 刷新一次页面以确保内容正确加载
+                    log_message("刷新Firebase Studio页面以确保内容正确加载...")
+                    await page.reload()
+                    
+                    # 再次等待DOM内容加载和网络稳定
+                    await page.wait_for_load_state("domcontentloaded", timeout=60000)
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=60000)
+                    except Exception as e:
+                        log_message(f"刷新后等待网络稳定超时，但将继续流程: {e}")
+                except Exception as e:
+                    log_message(f"跳转或等待Firebase Studio页面加载时出错: {e}，但将继续尝试")
+                
                 return True
             else:
                 log_message(f"UI交互后验证登录失败：URL不含signin: {url_valid}, 工作区验证: {workspace_icon_visible}")
@@ -540,7 +602,36 @@ async def direct_url_access(page):
             # 登录成功后跳转到Firebase Studio
             firebase_url = "https://studio.firebase.google.com/sherry-17350756"
             log_message(f"登录成功，跳转到Firebase Studio URL: {firebase_url}")
-            await page.goto(firebase_url, timeout=TIMEOUT)
+            try:
+                # 增加页面跳转的超时处理
+                await page.goto(firebase_url, timeout=TIMEOUT)
+                
+                # 等待DOM内容加载
+                log_message("等待Firebase Studio页面DOM内容加载...")
+                await page.wait_for_load_state("domcontentloaded", timeout=90000)
+                log_message("Firebase Studio DOM内容已加载")
+                
+                # 等待网络活动稳定
+                try:
+                    log_message("等待Firebase Studio网络活动稳定...")
+                    await page.wait_for_load_state("networkidle", timeout=60000)
+                    log_message("Firebase Studio网络活动已稳定")
+                except Exception as e:
+                    log_message(f"等待网络稳定超时，但将继续流程: {e}")
+                
+                # 刷新一次页面以确保内容正确加载
+                log_message("刷新Firebase Studio页面以确保内容正确加载...")
+                await page.reload()
+                
+                # 再次等待DOM内容加载和网络稳定
+                await page.wait_for_load_state("domcontentloaded", timeout=60000)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=60000)
+                except Exception as e:
+                    log_message(f"刷新后等待网络稳定超时，但将继续流程: {e}")
+            except Exception as e:
+                log_message(f"跳转或等待Firebase Studio页面加载时出错: {e}，但将继续尝试")
+            
             return True
         else:
             log_message(f"验证登录失败：URL不含signin: {url_valid}, 工作区图标出现: {workspace_icon_visible}")
