@@ -341,16 +341,15 @@ async def run(playwright: Playwright) -> bool:
                 max_checkbox_retries = 3
                 for checkbox_attempt in range(1, max_checkbox_retries + 1):
                     try:
-                        # 先点击第一个条款复选框的label
-                        await page.locator("label").filter(has_text="I accept the terms and").click(force=True)
-                        log_message(f"第{checkbox_attempt}次尝试：已点击第一个条款复选框label")
+                        # 最佳方法：使用ID直接选择复选框并使用check()方法
+                        await page.locator("#utos-checkbox").check()
+                        log_message(f"第{checkbox_attempt}次尝试：已勾选条款复选框")
 
                         # 等待2秒，确保按钮状态刷新
                         await asyncio.sleep(2)
 
-                        # 等待Confirm按钮可用
-                        await page.wait_for_selector('#submit-button:not([disabled])', timeout=8000)
-                        await page.get_by_text("Confirm", exact=True).click()
+                        # 使用角色和名称定位Confirm按钮并点击
+                        await page.get_by_role("button", name="Confirm").click()
                         log_message(f"第{checkbox_attempt}次尝试：已点击Confirm按钮")
                         break  # 成功则跳出重试循环
                     except Exception as e:
