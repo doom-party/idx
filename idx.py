@@ -475,7 +475,7 @@ async def login_with_ui_flow(page):
                 log_message("UI交互后双重验证通过：确认已成功登录idx.google.com!")
                 
                 # 跳转到Firebase Studio
-                firebase_url = "https://studio.firebase.google.com/sherry-17350756"
+                firebase_url = "https://idx.google.com/sherry-17350756"
                 log_message(f"登录成功，跳转到Firebase Studio URL: {firebase_url}")
                 await page.goto(firebase_url, timeout=TIMEOUT)
                 return True
