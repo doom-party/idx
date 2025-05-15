@@ -28,6 +28,7 @@ jobs:
         pip install playwright
         pip install asyncio
         pip install requests
+        pip install python-dotenv
         playwright install chromium
 
     - name: Run script
