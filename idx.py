@@ -8,6 +8,10 @@ from datetime import datetime
 from pathlib import Path
 from playwright.async_api import Playwright, async_playwright
 import time
+from dotenv import load_dotenv
+
+# 加载.env文件中的环境变量
+load_dotenv()
 
 # 基础配置
 BASE_PREFIX = "9000-idx-sherry-"
@@ -37,9 +41,18 @@ def log_message(message):
 
 def send_to_telegram(message):
     """将消息发送到Telegram"""
-    # 从环境变量获取凭据，如果未设置则使用默认值
-    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", '5454493483:AAEaEfZ_OWMyFuB6Om_rfHJeZAmN8iBtFoU')
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", '1918407248')
+    # 从环境变量获取凭据，优先使用.env文件中的配置
+    bot_token = os.environ.get("TG_TOKEN")
+    chat_id = os.environ.get("TG_CHAT_ID")
+    
+    # 如果环境变量中没有找到，使用默认值（作为备选）
+    if not bot_token:
+        bot_token = '5454493483:AAEaEfZ_OWMyFuB6Om_rfHJeZAmN8iBtFoU'
+        log_message("未在环境变量中找到TG_TOKEN，使用默认值")
+    
+    if not chat_id:
+        chat_id = '1918407248'
+        log_message("未在环境变量中找到TG_CHAT_ID，使用默认值")
     
     if not bot_token or not chat_id:
         log_message("缺少Telegram配置，跳过通知")
@@ -91,6 +104,7 @@ def send_to_telegram(message):
     
     # 发送简化的消息
     try:
+        log_message(f"正在使用TG_TOKEN={bot_token[:5]}...和TG_CHAT_ID={chat_id[:3]}...发送消息")
         url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
         data = {"chat_id": chat_id, "text": simplified_message}
         response = requests.post(url, data=data, timeout=10)
@@ -305,103 +319,264 @@ async def handle_terms_dialog(page, max_attempts=3):
         try:
             log_message(f"第{attempt}次尝试处理Terms对话框...")
             
-            # 使用JavaScript直接勾选复选框，避免点击到链接
-            await page.evaluate("""
-                // 尝试多种可能的选择器找到复选框
-                const selectors = [
-                    '#utos-checkbox',
-                    'input[type="checkbox"][id*="checkbox"]',
-                    'input[type="checkbox"]',
-                    'div.utoscheckbox-root input[type="checkbox"]'
-                ];
-                
-                // 尝试所有选择器
-                for (const selector of selectors) {
-                    const checkbox = document.querySelector(selector);
-                    if (checkbox && !checkbox.checked) {
-                        checkbox.checked = true;
-                        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
-                        console.log('已通过JavaScript勾选复选框：' + selector);
-                        return true;
-                    }
+            # 检查确认按钮状态，看是否需要勾选复选框
+            button_status = await page.evaluate("""() => {
+                // 先检查确认按钮是否存在且是否禁用
+                const confirmButton = document.querySelector('#submit-button');
+                if (confirmButton) {
+                    return {
+                        found: true,
+                        disabled: confirmButton.disabled,
+                        className: confirmButton.className
+                    };
                 }
-                
-                // 如果没有找到匹配的选择器，提供更多详细信息
-                console.log('无法找到复选框，页面内的所有checkbox如下:');
-                document.querySelectorAll('input[type="checkbox"]').forEach((cb, i) => {
-                    console.log(`Checkbox ${i}: id=${cb.id}, name=${cb.name}, aria-label=${cb.getAttribute('aria-label')}`);
-                });
-                
-                return false;
-            """)
+                return { found: false };
+            }""")
             
-            log_message("已尝试通过JavaScript勾选复选框")
-            
-            # 等待状态更新
-            await asyncio.sleep(2)
-            
-            # 使用JavaScript点击确认按钮
-            button_clicked = await page.evaluate("""
-                // 尝试多种可能的按钮选择器
-                const buttonSelectors = [
-                    'button[name="confirm"], button:has-text("Confirm")',
-                    '#submit-button:not([disabled])',
-                    'button[type="submit"]:not([disabled])',
-                    'button.confirm-button:not([disabled])',
-                    'button.mat-button:not([disabled])',
-                    'button:not([disabled])'
-                ];
+            if button_status.get('found'):
+                log_message(f"确认按钮状态: disabled={button_status.get('disabled')}, className={button_status.get('className')}")
                 
-                // 尝试所有按钮选择器
-                for (const selector of buttonSelectors) {
-                    const buttons = Array.from(document.querySelectorAll(selector));
-                    // 优先选择包含Confirm或Accept文本的按钮
-                    const confirmButton = buttons.find(btn => 
-                        btn.textContent.includes('Confirm') || 
-                        btn.textContent.includes('Accept') ||
-                        btn.textContent.includes('确认') ||
-                        btn.textContent.includes('接受')
-                    ) || buttons[0]; // 如果没找到，使用第一个按钮
+                # 如果按钮已经可用，无需勾选
+                if not button_status.get('disabled'):
+                    log_message("确认按钮已经可用，无需勾选复选框")
+                else:
+                    log_message("确认按钮处于禁用状态，需要勾选复选框...")
                     
-                    if (confirmButton) {
-                        console.log('找到确认按钮：' + confirmButton.textContent);
-                        confirmButton.click();
-                        return true;
+                    # 先检查utos-checkbox和marketing-checkbox状态
+                    checkbox_status = await page.evaluate("""() => {
+                        // 检查所有可能的复选框
+                        const checkboxes = [];
+                        const ids = ['utos-checkbox', 'marketing-checkbox'];
+                        
+                        for (const id of ids) {
+                            const checkbox = document.querySelector(`#${id}`);
+                            if (checkbox) {
+                                checkboxes.push({
+                                    id: id,
+                                    checked: checkbox.checked,
+                                    className: checkbox.className,
+                                    valid: checkbox.className.includes('ng-valid'),
+                                    invalid: checkbox.className.includes('ng-invalid')
+                                });
+                            }
+                        }
+                        
+                        // 检查labels是否有is-checked类
+                        const checkedLabels = document.querySelectorAll('label.is-checked, label.basic-checkbox-label.is-checked');
+                        
+                        return {
+                            checkboxes: checkboxes,
+                            checkedLabelsCount: checkedLabels.length
+                        };
+                    }""")
+                    
+                    log_message(f"发现 {len(checkbox_status.get('checkboxes', []))} 个复选框，已勾选标签数: {checkbox_status.get('checkedLabelsCount', 0)}")
+                    
+                    # 尝试勾选所有未勾选的复选框
+                    for checkbox in checkbox_status.get('checkboxes', []):
+                        checkbox_id = checkbox.get('id')
+                        if not checkbox.get('checked') or checkbox.get('invalid'):
+                            log_message(f"尝试勾选复选框 #{checkbox_id}...")
+                            
+                            # 使用多种方法确保复选框被勾选
+                            await page.evaluate(f"""() => {{
+                                const checkbox = document.querySelector('#{checkbox_id}');
+                                if (checkbox) {{
+                                    // 1. 先设置checked属性
+                                    checkbox.checked = true;
+                                    
+                                    // 2. 修改ng-invalid为ng-valid
+                                    checkbox.classList.remove('ng-invalid');
+                                    checkbox.classList.add('ng-valid');
+                                    
+                                    // 3. 确保label有is-checked类
+                                    const label = checkbox.closest('label');
+                                    if (label) {{
+                                        label.classList.add('is-checked');
+                                        if (label.classList.contains('basic-checkbox-label')) {{
+                                            label.classList.add('basic-checkbox-label', 'is-checked');
+                                        }}
+                                    }}
+                                    
+                                    // 4. 触发所有相关事件以确保Angular检测到变化
+                                    ['change', 'input', 'click'].forEach(eventName => {{
+                                        checkbox.dispatchEvent(new Event(eventName, {{ bubbles: true }}));
+                                    }});
+                                    
+                                    console.log('已勾选复选框: ' + checkbox.id);
+                                    return true;
+                                }}
+                                return false;
+                            }}""")
+                            
+                            # 使用Playwright的check方法作为备份
+                            try:
+                                await page.locator(f'#{checkbox_id}').check(force=True, timeout=2000)
+                                log_message(f"已使用Playwright API勾选复选框 #{checkbox_id}")
+                            except Exception as e:
+                                log_message(f"使用Playwright勾选 #{checkbox_id} 失败: {str(e)}")
+                    
+                    # 等待Angular更新DOM
+                    log_message("等待Angular更新DOM状态...")
+                    await asyncio.sleep(2)
+                    
+                    # 验证确认按钮是否变为可用
+                    updated_button_status = await page.evaluate("""() => {
+                        const confirmButton = document.querySelector('#submit-button');
+                        if (confirmButton) {
+                            return {
+                                found: true,
+                                disabled: confirmButton.disabled,
+                                className: confirmButton.className,
+                                text: confirmButton.textContent.trim()
+                            };
+                        }
+                        return { found: false };
+                    }""")
+                    
+                    if updated_button_status.get('found'):
+                        if not updated_button_status.get('disabled'):
+                            log_message(f"确认按钮已变为可用状态! 文本: {updated_button_status.get('text')}")
+                        else:
+                            log_message(f"确认按钮仍然处于禁用状态: {updated_button_status}")
+                            
+                            # 最后尝试：强制启用按钮
+                            await page.evaluate("""() => {
+                                const button = document.querySelector('#submit-button');
+                                if (button) {
+                                    // 移除disabled属性
+                                    button.disabled = false;
+                                    
+                                    // 移除禁用相关的类
+                                    button.classList.remove('disabled');
+                                    
+                                    console.log('已强制启用确认按钮');
+                                }
+                            }""")
+            else:
+                log_message("未找到#submit-button，尝试查找任何确认按钮...")
+                
+                # 尝试查找任何看起来像确认按钮的元素
+                confirm_buttons = await page.evaluate("""() => {
+                    // 查找文本包含confirm的按钮
+                    const buttons = Array.from(document.querySelectorAll('button')).filter(btn => 
+                        btn.textContent.toLowerCase().includes('confirm') || 
+                        btn.textContent.toLowerCase().includes('accept') ||
+                        btn.textContent.toLowerCase().includes('确认')
+                    );
+                    
+                    return buttons.map(btn => ({
+                        text: btn.textContent.trim(),
+                        disabled: btn.disabled,
+                        className: btn.className
+                    }));
+                }""")
+                
+                if confirm_buttons:
+                    log_message(f"找到 {len(confirm_buttons)} 个可能的确认按钮")
+                    for i, btn in enumerate(confirm_buttons):
+                        log_message(f"按钮 {i+1}: 文本='{btn.get('text')}', 禁用={btn.get('disabled')}")
+                else:
+                    log_message("未找到任何确认按钮")
+            
+            # 尝试点击确认按钮 (无论之前的操作是否成功)
+            log_message("尝试点击确认按钮...")
+            button_clicked = False
+            
+            # 方法1: 使用Playwright点击#submit-button
+            try:
+                submit_button = page.locator('#submit-button')
+                if await submit_button.count() > 0:
+                    # 检查按钮是否可见且不禁用
+                    is_enabled = await submit_button.is_enabled()
+                    if is_enabled:
+                        await submit_button.click(timeout=3000, force=True)
+                        log_message("已点击#submit-button")
+                        button_clicked = True
+                    else:
+                        log_message("#submit-button存在但不可用，尝试其他方法")
+            except Exception as e:
+                log_message(f"点击#submit-button失败: {str(e)}")
+            
+            # 方法2: 使用JavaScript点击确认按钮
+            if not button_clicked:
+                button_clicked = await page.evaluate("""() => {
+                    try {
+                        // 首先尝试#submit-button
+                        const submitButton = document.querySelector('#submit-button');
+                        if (submitButton && !submitButton.disabled) {
+                            submitButton.click();
+                            console.log('已点击#submit-button');
+                            return true;
+                        }
+                        
+                        // 寻找任何包含"Confirm"文本的按钮
+                        const confirmButtons = Array.from(document.querySelectorAll('button')).filter(btn => 
+                            !btn.disabled && (
+                                btn.textContent.includes('Confirm') || 
+                                btn.textContent.includes('Accept') ||
+                                btn.textContent.includes('确认')
+                            )
+                        );
+                        
+                        if (confirmButtons.length > 0) {
+                            confirmButtons[0].click();
+                            console.log('已点击确认按钮: ' + confirmButtons[0].textContent);
+                            return true;
+                        }
+                        
+                        // 如果所有方法都失败，尝试点击任何非禁用按钮
+                        const anyButton = document.querySelector('button:not([disabled])');
+                        if (anyButton) {
+                            anyButton.click();
+                            console.log('已点击任意非禁用按钮: ' + anyButton.textContent);
+                            return true;
+                        }
+                        
+                        return false;
+                    } catch (e) {
+                        console.error('点击按钮时发生错误:', e);
+                        return false;
                     }
-                }
+                }""")
                 
-                // 如果没找到匹配的按钮，提供更多信息
-                console.log('无法找到确认按钮，页面内的所有按钮如下:');
-                document.querySelectorAll('button').forEach((btn, i) => {
-                    console.log(`Button ${i}: text=${btn.textContent.trim()}, disabled=${btn.disabled}`);
-                });
-                
-                return false;
-            """)
+                if button_clicked:
+                    log_message("已通过JavaScript点击确认按钮")
             
             if button_clicked:
-                log_message("已通过JavaScript点击确认按钮")
+                log_message("成功点击确认按钮，Terms对话框处理完成")
+                await asyncio.sleep(2)  # 等待对话框关闭
                 return True
-            else:
-                log_message("通过JavaScript未能找到确认按钮")
                 
-            # 如果JavaScript方法失败，尝试截图来帮助调试
+            # 记录调试信息
+            log_message("没有成功点击确认按钮，记录当前页面状态供分析...")
             try:
-                screenshot_path = f"terms_dialog_attempt_{attempt}.png"
-                await page.screenshot(path=screenshot_path)
-                log_message(f"已保存Terms对话框截图到 {screenshot_path}")
+                # 保存截图
+                await page.screenshot(path=f"terms_dialog_attempt_{attempt}.png")
+                
+                # 保存HTML结构
+                html = await page.content()
+                with open(f"terms_dialog_html_{attempt}.txt", "w", encoding="utf-8") as f:
+                    f.write(html[:15000])
+                
+                # 最后尝试：点击页面上任何可点击元素
+                await page.evaluate("""() => {
+                    // 记录所有复选框状态
+                    document.querySelectorAll('input[type="checkbox"]').forEach((cb, i) => {
+                        console.log(`Checkbox ${i}: id=${cb.id}, checked=${cb.checked}, class=${cb.className}`);
+                    });
+                    
+                    // 记录所有按钮状态
+                    document.querySelectorAll('button').forEach((btn, i) => {
+                        console.log(`Button ${i}: text=${btn.textContent.trim()}, disabled=${btn.disabled}`);
+                    });
+                }""")
             except Exception as e:
-                log_message(f"保存截图失败: {e}")
+                log_message(f"保存调试信息失败: {e}")
                 
         except Exception as e:
             log_message(f"第{attempt}次处理Terms对话框失败: {e}")
-            
-            # 尝试获取页面源码以便调试
-            try:
-                html = await page.content()
-                log_message(f"当前页面源码片段: {html[:500]}...")
-            except Exception:
-                pass
+            log_message(traceback.format_exc())
             
             if attempt < max_attempts:
                 log_message("等待2秒后重试...")
@@ -410,16 +585,9 @@ async def handle_terms_dialog(page, max_attempts=3):
                 log_message("已达到最大重试次数，继续执行后续步骤")
                 return False
     
-    # 如果所有尝试都失败，尝试点击页面任意处继续
-    try:
-        # 尝试点击页面中间位置，避开链接
-        log_message("尝试点击页面中间，绕过Terms对话框...")
-        await page.mouse.click(page.viewport_size["width"] // 2, page.viewport_size["height"] // 2)
-        await asyncio.sleep(2)
-        return True
-    except Exception as e:
-        log_message(f"尝试点击页面中间也失败: {e}")
-        return False
+    # 如果所有尝试都失败，但仍然继续执行后续步骤
+    log_message("Terms对话框处理可能未完全成功，但将继续执行后续步骤")
+    return True
 
 async def wait_for_workspace_loaded(page, timeout=180):
     """等待Firebase Studio工作区加载完成"""
