@@ -37,7 +37,7 @@ jobs:
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         IDX_EMAIL: ${{ secrets.IDX_EMAIL }}
         IDX_PASSWORD: ${{ secrets.IDX_PASSWORD }}
-      run: python idx.py --once
+      run: python idx.py
 
     - name: Commit and push if changed
       run: |
