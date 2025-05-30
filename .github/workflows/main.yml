@@ -29,13 +29,15 @@ jobs:
         pip install asyncio
         pip install requests
         pip install python-dotenv
-        playwright install chromium
+        playwright install firefox
 
     - name: Run script
       env:
-        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        TG_TOKEN: ${{ secrets.TG_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-      run: python idx.py
+        IDX_EMAIL: ${{ secrets.IDX_EMAIL }}
+        IDX_PASSWORD: ${{ secrets.IDX_PASSWORD }}
+      run: python idx.py --once
 
     - name: Commit and push if changed
       run: |
