@@ -1165,7 +1165,7 @@ async def run(playwright: Playwright) -> bool:
         log_message(f"第{attempt}/{MAX_RETRIES}次尝试...")
         
         # Firefox不需要复杂的浏览器参数配置
-        proxy = {"server": "socks5://139.185.47.28:1080"}
+        #proxy = {"server": "socks5://139.185.47.28:1080"}
         # 启动浏览器 - 改为Firefox（基于520.py的成功经验）
         browser = await playwright.firefox.launch(headless=True)
         
@@ -1175,8 +1175,8 @@ async def run(playwright: Playwright) -> bool:
             
             # 创建浏览器上下文 - 简化配置
             context = await browser.new_context(
-                storage_state=cookie_data,  # 直接使用加载的数据对象
-                proxy=proxy  # 使用无认证的SOCKS5代理
+                storage_state=cookie_data  # 直接使用加载的数据对象
+                #proxy=proxy  # 使用无认证的SOCKS5代理
             )
             
             page = await context.new_page()
